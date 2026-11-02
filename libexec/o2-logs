@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# logs — journaux Apache, PHP et Passenger
+#: o2 logs <domaine> [-f] [-n 100]        accès Apache (https) du domaine
+#: o2 logs php <docroot> [-f]             error_log PHP dans la racine (ex. public_html/mon-site)
+#: o2 logs node <app-root> [-f]           stderr.log de l'app Passenger (Node/Python)
+. "$O2_ROOT/lib/common.sh"; load_config
+n=100; follow=""; pos=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f) follow=1; shift;;
+    -n) n="${2:?-n attend un nombre}"; shift 2;;
+    -h|--help) usage;;
+    *) pos+=("$1"); shift;;
+  esac
+done
+[ ${#pos[@]} -ge 1 ] || usage 1
+case "${pos[0]}" in
+  php)  [ -n "${pos[1]:-}" ] || usage 1; f="${pos[1]#/}/error_log";;
+  node) [ -n "${pos[1]:-}" ] || usage 1; f="${pos[1]#/}/stderr.log";;
+  *)    f="access-logs/${pos[0]}-ssl_log";;
+esac
+qf="$(printf '%q' "$f")"
+if [ -n "$follow" ]; then exec ssh "$O2_SSH_ALIAS" -- "tail -n $n -f ~/$qf"
+else remote "tail -n $n ~/$qf 2>/dev/null || { echo 'o2: pas de fichier ~/$f' >&2; echo 'journaux disponibles :' >&2; ls ~/access-logs 2>/dev/null >&2; exit 1; }"; fi

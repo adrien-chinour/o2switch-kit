@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# email — comptes et redirections e-mail
+#: o2 email list
+#: o2 email add <adresse@domaine> [mot_de_passe]     (quota illimité ; mot de passe généré si absent)
+#: o2 email rm <adresse@domaine>
+#: o2 email forward <adresse@domaine> <destination@ailleurs>
+#: o2 email forwards
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+split() { local="${1%@*}"; domain="${1#*@}"; [ "$local" != "$1" ] || die "adresse attendue : nom@domaine"; }
+case "${1:-list}" in
+  list) uapi Email list_pops_with_disk | jq -r '.[] | "\(.email)\t\(.humandiskused // "")\t\(.humandiskquota // "")"' | column -t;;
+  add)  [ -n "${2:-}" ] || usage 1; split "$2"; pass="${3:-$(openssl rand -base64 18 | tr -d '/+=')}"
+        uapi Email add_pop "email=$local" "domain=$domain" "password=$pass" quota=0 >/dev/null
+        ok "compte $2 créé"; echo "EMAIL=$2"; echo "EMAIL_PASSWORD=$pass"
+        echo "IMAP/SMTP : $O2_HOST (IMAP 993 SSL, SMTP 465 SSL), identifiant = l'adresse complète";;
+  rm)   [ -n "${2:-}" ] || usage 1; split "$2"
+        uapi Email delete_pop "email=$local" "domain=$domain" >/dev/null && ok "$2 supprimé";;
+  forward) [ -n "${3:-}" ] || usage 1; split "$2"
+        uapi Email add_forwarder "domain=$domain" "email=$2" fwdopt=fwd "fwdemail=$3" >/dev/null && ok "$2 → $3";;
+  forwards) uapi Email list_forwarders | jq -r '.[] | "\(.dest)\t→\t\(.forward)"' | column -t;;
+  -h|--help) usage;;
+  *) usage 1;;
+esac

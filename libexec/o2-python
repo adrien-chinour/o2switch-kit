@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# python — applications Python (Passenger / "Setup Python App") : mêmes sous-commandes que o2 node
+O2_INTERP=python exec "$O2_ROOT/libexec/app.sh" "$@"

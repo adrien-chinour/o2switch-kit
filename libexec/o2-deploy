@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# deploy — envoie un projet sur l'hébergement avec rsync (config .o2switch dans le projet)
+#: o2 deploy [dossier-projet] [-n|--dry-run] [--delete]   lit <projet>/.o2switch
+#: o2 deploy init                                         écrit un .o2switch modèle dans le dossier courant
+#: o2 deploy <dossier-local> <dossier-distant> [-n] [--delete]   mode explicite, sans fichier .o2switch
+#:
+#: Fichier .o2switch (sourcé par bash) :
+#:   REMOTE_DIR=public_html/mon-site     obligatoire, relatif au home
+#:   LOCAL_DIR=dist                      défaut : le dossier du projet
+#:   BUILD="npm run build"               commande locale avant l'envoi (optionnel)
+#:   EXCLUDE=".git node_modules .env"    motifs rsync ajoutés aux exclusions par défaut
+#:   DELETE=1                            supprime côté serveur ce qui n'existe plus en local
+#:   AFTER="composer install --no-dev"   commande distante exécutée dans REMOTE_DIR après l'envoi
+#:   NODE_APP=apps/api                   app Node à redémarrer après l'envoi (o2 node restart)
+#:   PYTHON_APP=apps/api                 idem pour une app Python
+. "$O2_ROOT/lib/common.sh"; load_config; need rsync
+
+DEFAULT_EXCLUDE=".git .gitignore .o2switch .env .env.* node_modules .DS_Store .idea .vscode"
+
+if [ "${1:-}" = "init" ]; then
+  [ -e .o2switch ] && die ".o2switch existe déjà"
+  cat > .o2switch <<'TPL'
+# Déploiement o2switch — voir : o2 deploy --help
+REMOTE_DIR=public_html/mon-site
+#LOCAL_DIR=dist
+#BUILD="npm run build"
+#EXCLUDE="tests docs"
+#DELETE=1
+#AFTER="composer install --no-dev --optimize-autoloader && php bin/console cache:clear"
+#NODE_APP=apps/api
+TPL
+  ok ".o2switch créé, édite-le puis lance : o2 deploy"; exit 0
+fi
+
+dry=""; delete=""; pos=()
+for a in "$@"; do case "$a" in -n|--dry-run) dry=1;; --delete) delete=1;; -h|--help) usage;; *) pos+=("$a");; esac; done
+
+if [ ${#pos[@]} -ge 2 ]; then
+  LOCAL_DIR="${pos[0]}"; REMOTE_DIR="${pos[1]}"; project="$LOCAL_DIR"
+else
+  project="${pos[0]:-.}"
+  [ -f "$project/.o2switch" ] || die "pas de $project/.o2switch (o2 deploy init), ou donne : o2 deploy <local> <distant>"
+  # shellcheck source=/dev/null
+  . "$project/.o2switch"
+  : "${REMOTE_DIR:?REMOTE_DIR manquant dans .o2switch}"
+  LOCAL_DIR="$project/${LOCAL_DIR:-.}"
+fi
+[ -d "$LOCAL_DIR" ] || die "dossier local introuvable : $LOCAL_DIR"
+[ -n "${DELETE:-}" ] && delete=1
+REMOTE_DIR="${REMOTE_DIR#/}"
+
+if [ -n "${BUILD:-}" ] && [ -z "$dry" ]; then info "build local : $BUILD"; (cd "$project" && bash -c "$BUILD"); fi
+
+ex=(); for p in $DEFAULT_EXCLUDE ${EXCLUDE:-}; do ex+=(--exclude "$p"); done
+info "rsync $LOCAL_DIR → $O2_SSH_ALIAS:~/$REMOTE_DIR ${delete:+(avec suppression)} ${dry:+[simulation]}"
+remote_q mkdir -p "$REMOTE_DIR" >/dev/null
+rsync -az --human-readable --itemize-changes ${delete:+--delete} ${dry:+--dry-run} "${ex[@]}" \
+  "${LOCAL_DIR%/}/" "$O2_SSH_ALIAS:$REMOTE_DIR/"
+[ -z "$dry" ] || exit 0
+
+if [ -n "${AFTER:-}" ]; then info "commande distante : $AFTER"; remote "cd ~/$(printf '%q' "$REMOTE_DIR") && $AFTER"; fi
+[ -z "${NODE_APP:-}" ] || "$O2_ROOT/bin/o2" node restart "$NODE_APP"
+[ -z "${PYTHON_APP:-}" ] || "$O2_ROOT/bin/o2" python restart "$PYTHON_APP"
+ok "déployé"

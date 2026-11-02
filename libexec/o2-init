@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# init — configuration initiale (hôte, identifiant, jeton, clé SSH, liste blanche)
+#: o2 init [--host serveur.o2switch.net] [--user identifiant] [--token JETON]
+#:
+#: Crée ~/.config/o2switch/config, une clé SSH dédiée, l'alias SSH "o2switch",
+#: ajoute ton IP à la liste blanche (si jeton) et installe la clé sur l'hébergement.
+#: Sans option, les valeurs sont demandées interactivement.
+#:
+#: Seule étape à faire une fois dans cPanel : créer un jeton d'API
+#: (Sécurité → Gérer les jetons d'API → Créer). Il sert à gérer la liste blanche SSH.
+. "$O2_ROOT/lib/common.sh"
+need ssh; need ssh-keygen; need jq; need curl
+
+host="" user="" token=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host) host="$2"; shift 2;;
+    --user) user="$2"; shift 2;;
+    --token) token="$2"; shift 2;;
+    -h|--help) usage;;
+    *) die "option inconnue : $1";;
+  esac
+done
+
+if [ -f "$O2_CONFIG" ]; then
+  # shellcheck source=/dev/null
+  . "$O2_CONFIG"
+  host="${host:-${O2_HOST:-}}"; user="${user:-${O2_USER:-}}"; token="${token:-${O2_API_TOKEN:-}}"
+fi
+ask() { local v; read -r -p "$1 [${2:-}] : " v </dev/tty; printf '%s' "${v:-$2}"; }
+[ -n "$host" ] || host="$(ask 'Serveur cPanel (ex. dojo.o2switch.net, ou ton domaine)' '')"
+[ -n "$user" ] || user="$(ask 'Identifiant cPanel' '')"
+[ -n "$token" ] || token="$(ask 'Jeton d API cPanel (vide pour sauter)' '')"
+[ -n "$host" ] && [ -n "$user" ] || die "hôte et identifiant obligatoires"
+
+key="$HOME/.ssh/o2switch_ed25519"
+mkdir -p "$(dirname "$O2_CONFIG")" "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+umask 077
+cat > "$O2_CONFIG" <<CFG
+# Configuration o2switch — utilisée par la commande o2
+O2_HOST=$host
+O2_USER=$user
+O2_API_TOKEN=$token
+O2_SSH_KEY=$key
+# ssh (défaut) ou https : transport des appels uapi. https = jeton d'API, sans SSH.
+O2_API_VIA=ssh
+CFG
+ok "config écrite : $O2_CONFIG"
+
+if [ ! -f "$key" ]; then
+  ssh-keygen -t ed25519 -N "" -C "o2switch-$user" -f "$key" >/dev/null
+  ok "clé SSH générée : $key"
+fi
+
+if ! grep -qs "^Host $O2_SSH_ALIAS\$" "$HOME/.ssh/config"; then
+  cat >> "$HOME/.ssh/config" <<SSHCFG
+
+Host $O2_SSH_ALIAS
+  HostName $host
+  User $user
+  Port 22
+  IdentityFile $key
+  IdentitiesOnly yes
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h-%p
+  ControlPersist 10m
+  ServerAliveInterval 30
+SSHCFG
+  chmod 600 "$HOME/.ssh/config"
+  ok "alias SSH ajouté : ssh $O2_SSH_ALIAS"
+else
+  sed -i "/^Host $O2_SSH_ALIAS\$/,/^$/{s/^\(  HostName \).*/\1$host/;s/^\(  User \).*/\1$user/}" "$HOME/.ssh/config"
+  ok "alias SSH mis à jour : ssh $O2_SSH_ALIAS"
+fi
+
+if [ -n "$token" ]; then
+  info "ajout de ton IP publique à la liste blanche SSH (jusqu'à 35 s)"
+  "$O2_ROOT/bin/o2" whitelist add || warn "liste blanche impossible, vérifie le jeton (o2 whitelist list)"
+else
+  warn "pas de jeton : ajoute ton IP dans cPanel → Outils → Autorisation SSH avant de continuer"
+fi
+
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$O2_SSH_ALIAS" true 2>/dev/null; then
+  info "installation de la clé publique (mot de passe cPanel demandé une seule fois)"
+  ssh-copy-id -i "$key.pub" -o IdentitiesOnly=yes "$O2_SSH_ALIAS" </dev/tty || die "échec ssh-copy-id : IP pas encore en liste blanche ? (o2 whitelist list)"
+fi
+ok "connexion SSH par clé opérationnelle"
+exec "$O2_ROOT/bin/o2" doctor

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# db — bases MySQL : création, dump, import, shell
+#: o2 db list
+#: o2 db users
+#: o2 db create <nom> [mot_de_passe]      crée base + utilisateur <user>_<nom> avec tous les droits, affiche les accès
+#: o2 db rm <nom>                         supprime base et utilisateur du même nom
+#: o2 db password <utilisateur> <mdp>     change le mot de passe d'un utilisateur
+#: o2 db dump <base> [fichier.sql]        mysqldump (stdout si pas de fichier)
+#: o2 db import <base> <fichier.sql>
+#: o2 db shell <base>                     client mysql interactif
+#:
+#: Le préfixe cPanel (<identifiant>_) est ajouté automatiquement s'il manque.
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+
+case "${1:-list}" in
+  list)  uapi Mysql list_databases | jq -r '.[] | "\(.database)\t\(.disk_usage // 0 | tostring)\t\(.users | join(","))"' | column -t;;
+  users) uapi Mysql list_users | jq -r '.[] | "\(.user)\t\(.databases | join(","))"' | column -t;;
+  create)
+    [ -n "${2:-}" ] || usage 1
+    name="$(with_prefix "$2")"; pass="${3:-$(openssl rand -hex 16)}"
+    maxu="$(uapi Mysql get_restrictions | jq -r '.max_username_length')"
+    [ ${#name} -le "$maxu" ] || die "nom trop long pour un utilisateur MySQL (max $maxu) : $name"
+    uapi Mysql create_database "name=$name" >/dev/null && ok "base $name créée"
+    uapi Mysql create_user "name=$name" "password=$pass" >/dev/null && ok "utilisateur $name créé"
+    uapi Mysql set_privileges_on_database "user=$name" "database=$name" "privileges=ALL PRIVILEGES" >/dev/null && ok "droits accordés"
+    cat <<ENV
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=$name
+DB_USER=$name
+DB_PASSWORD=$pass
+DATABASE_URL=mysql://$name:$pass@localhost:3306/$name
+ENV
+    ;;
+  rm)
+    [ -n "${2:-}" ] || usage 1; name="$(with_prefix "$2")"
+    uapi Mysql delete_database "name=$name" >/dev/null && ok "base $name supprimée"
+    uapi Mysql delete_user "name=$name" >/dev/null 2>&1 && ok "utilisateur $name supprimé" || true;;
+  password)
+    [ -n "${3:-}" ] || usage 1
+    uapi Mysql set_password "user=$(with_prefix "$2")" "password=$3" >/dev/null && ok "mot de passe changé";;
+  dump)
+    [ -n "${2:-}" ] || usage 1; name="$(with_prefix "$2")"
+    if [ -n "${3:-}" ]; then remote_q mysqldump --single-transaction --quick "$name" > "$3" && ok "dump écrit : $3"
+    else remote_q mysqldump --single-transaction --quick "$name"; fi;;
+  import)
+    [ -f "${3:-}" ] || usage 1; name="$(with_prefix "$2")"
+    ssh "$O2_SSH_ALIAS" -- "$(rq mysql "$name")" < "$3" && ok "importé dans $name";;
+  shell) [ -n "${2:-}" ] || usage 1; exec ssh -t "$O2_SSH_ALIAS" -- "$(rq mysql "$(with_prefix "$2")")";;
+  -h|--help) usage;;
+  *) usage 1;;
+esac

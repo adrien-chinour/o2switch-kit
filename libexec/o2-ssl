@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# ssl — certificats (AutoSSL / Let's Encrypt, automatique chez o2switch)
+#: o2 ssl status            domaines couverts et dates d'expiration
+#: o2 ssl problems          domaines pour lesquels AutoSSL échoue (DNS pas encore à jour, etc.)
+#: o2 ssl run               force une passe AutoSSL maintenant
+#: o2 ssl redirect <domaine> on|off     redirection http → https
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+case "${1:-status}" in
+  status) uapi SSL installed_hosts | jq -r '
+      (["DOMAINE","CERTIFICAT POUR","EXPIRE LE"] | @tsv),
+      (.[] | [.servername, (.certificate.domains | join(" ")), (.certificate.not_after | todate | .[0:10])] | @tsv)' | column -t -s $'\t';;
+  problems) uapi SSL get_autossl_problems | jq -r 'if length == 0 then "aucun problème AutoSSL" else .[] | "\(.domain)\t\(.problem)" end';;
+  run) uapi SSL start_autossl_check >/dev/null && ok "AutoSSL lancé (résultat sous quelques minutes : o2 ssl status)";;
+  redirect) [ -n "${3:-}" ] || usage 1; st=0; [ "$3" = on ] && st=1
+      uapi SSL toggle_ssl_redirect_for_domains "domains=$2" "state=$st" >/dev/null && ok "redirection https $2 : $3";;
+  -h|--help) usage;;
+  *) usage 1;;
+esac

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# php — version PHP par domaine
+#: o2 php versions                 versions installées sur le serveur
+#: o2 php get [domaine]            version utilisée par chaque domaine (ou un seul)
+#: o2 php set <domaine> <version>  ex. o2 php set api.example.com 8.3   (ou ea-php83, ou inherit)
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+
+to_ea() { case "$1" in ea-php*|inherit) printf '%s' "$1";; *) printf 'ea-php%s' "${1//./}";; esac; }
+
+case "${1:-get}" in
+  versions) uapi LangPHP php_get_installed_versions | jq -r '.[]';;
+  get)
+    uapi LangPHP php_get_vhost_versions | jq -r --arg d "${2:-}" '
+      .[] | select($d == "" or .vhost == $d) | "\(.vhost)\t\(.version)\t\(.php_fpm // 0 | if . == 1 then "fpm" else "" end)"' | column -t;;
+  set)
+    [ -n "${3:-}" ] || usage 1
+    uapi LangPHP php_set_vhost_versions "vhost=$2" "version=$(to_ea "$3")" >/dev/null && ok "$2 → $(to_ea "$3")";;
+  -h|--help) usage;;
+  *) usage 1;;
+esac

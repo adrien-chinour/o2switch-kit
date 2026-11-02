@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# whitelist — liste blanche pare-feu SSH d'o2switch (5 adresses max)
+#: o2 whitelist list
+#: o2 whitelist add [IP|dyndns]       (défaut : IP publique actuelle)
+#: o2 whitelist rm <IP>               (retire les deux sens, in et out)
+#: o2 whitelist clear                 (retire toutes les adresses)
+#:
+#: Passe par la micro-API o2switch (SshWhitelist) avec le jeton d'API cPanel.
+. "$O2_ROOT/lib/common.sh"; load_config; need curl; need jq
+: "${O2_API_TOKEN:?O2_API_TOKEN manquant dans $O2_CONFIG (crée un jeton dans cPanel → Gérer les jetons d API)}"
+
+api() { # api action [param=val ...]
+  local action="$1"; shift; local args=()
+  for kv in "$@"; do args+=(--data-urlencode "$kv"); done
+  curl -sS -m 60 -G -H "Authorization: cpanel $O2_USER:$O2_API_TOKEN" \
+    "https://$O2_HOST:2083/execute/SshWhitelist/$action" "${args[@]}"
+}
+show() { json_ok "$1" || die "réponse illisible : $1"; printf '%s\n' "$1" | jq .; }
+
+case "${1:-list}" in
+  list)  show "$(api list)";;
+  add)   ip="${2:-$(my_ip)}"; info "ajout de $ip (port 22)"; show "$(api add "address=$ip" port=22)";;
+  rm)    [ -n "${2:-}" ] || usage 1
+         for d in in out; do show "$(api remove "address=$2" port=22 "direction=$d")"; done;;
+  clear) show "$(api remove_all)";;
+  -h|--help) usage;;
+  *) usage 1;;
+esac

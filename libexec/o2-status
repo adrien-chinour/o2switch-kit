@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# status — vue d'ensemble : quota, domaines, bases, apps Node
+#: o2 status
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+case "${1:-}" in -h|--help) usage;; esac
+info "quota disque"
+uapi Quota get_quota_info | jq -r 'if .megabyte_limit then "  \(.megabytes_used) Mo / \(.megabyte_limit) Mo" else "  \(.megabytes_used) Mo (illimité)" end'
+info "domaines"; "$O2_ROOT/bin/o2" domains list | sed 's/^/  /'
+info "bases MySQL"; "$O2_ROOT/bin/o2" db list | sed 's/^/  /'
+info "apps Node.js"
+"$O2_ROOT/bin/o2" node list 2>/dev/null | jq -r '[.. | objects | select(has("app_root") or has("startup_file"))] | if length == 0 then "  aucune" else .[] | "  \(.app_root // "?")  \(.domain // "")  \(.app_status // .status // "")" end' 2>/dev/null || echo "  (cloudlinux-selector indisponible)"

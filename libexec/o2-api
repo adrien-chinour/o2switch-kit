@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# api — appel brut de l'API cPanel (uapi) : o2 api Module fonction cle=valeur
+#: o2 api <Module> <fonction> [cle=valeur ...]        → .result.data en JSON
+#: o2 api --v2 <Module> <fonction> [cle=valeur ...]   → cpapi2 (ancienne API)
+#:
+#: Exemples :
+#:   o2 api DomainInfo list_domains
+#:   o2 api Mysql list_databases
+#:   o2 api Email list_pops
+#: Référence : https://api.docs.cpanel.net/ (UAPI)
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+case "${1:-}" in
+  -h|--help|"") usage;;
+  --v2) shift; [ $# -ge 2 ] || usage 1; cpapi2 "$@";;
+  *) [ $# -ge 2 ] || usage 1; uapi "$@";;
+esac

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# node — applications Node.js (Passenger / "Setup Node.js App") : create, install, env, restart, exec
+O2_INTERP=nodejs exec "$O2_ROOT/libexec/app.sh" "$@"

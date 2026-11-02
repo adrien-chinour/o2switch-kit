@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# ssh — ouvre un shell sur l'hébergement, ou y exécute une commande
+#: o2 ssh                      shell interactif
+#: o2 ssh <commande...>        exécute la commande (ex. o2 ssh ls public_html)
+. "$O2_ROOT/lib/common.sh"; load_config
+case "${1:-}" in -h|--help) usage;; esac
+if [ $# -eq 0 ]; then exec ssh "$O2_SSH_ALIAS"; fi
+exec ssh "$O2_SSH_ALIAS" -- "$*"

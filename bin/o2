@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# o2 — pilote un hébergement o2switch (cPanel) depuis le terminal, sans passer par l'interface.
+set -euo pipefail
+O2_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+export O2_ROOT
+
+usage() {
+  echo "usage : o2 <commande> [arguments]"
+  echo
+  echo "commandes :"
+  for f in "$O2_ROOT"/libexec/o2-*; do
+    [ -x "$f" ] || continue
+    printf '  %-10s %s\n' "${f##*/o2-}" "$(sed -n '2s/^# *[a-z0-9-]* *— *//p' "$f")"
+  done
+  echo
+  echo "aide d'une commande : o2 <commande> --help"
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in help|-h|--help) usage; exit 0;; esac
+script="$O2_ROOT/libexec/o2-$cmd"
+[ -x "$script" ] || { echo "o2: commande inconnue : $cmd" >&2; usage >&2; exit 1; }
+exec "$script" "$@"

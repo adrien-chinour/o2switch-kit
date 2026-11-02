@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# cron — tâches planifiées (crontab de l'hébergement)
+#: o2 cron list
+#: o2 cron add '<planning>' '<commande>'     ex. o2 cron add '*/5 * * * *' 'cd ~/apps/x && php bin/console messenger:consume --time-limit=280'
+#: o2 cron rm <motif>                        supprime les lignes contenant le motif
+#: o2 cron edit                              ouvre crontab -e sur l'hébergement
+. "$O2_ROOT/lib/common.sh"; load_config
+case "${1:-list}" in
+  list) remote "crontab -l 2>/dev/null || echo '(crontab vide)'";;
+  add)  [ -n "${3:-}" ] || usage 1
+        remote "( crontab -l 2>/dev/null; printf '%s\n' $(rq "$2 $3") ) | crontab -" && ok "ajouté : $2 $3";;
+  rm)   [ -n "${2:-}" ] || usage 1
+        remote "crontab -l 2>/dev/null | grep -vF -- $(rq "$2") | crontab -" && ok "lignes contenant « $2 » supprimées";;
+  edit) exec ssh -t "$O2_SSH_ALIAS" crontab -e;;
+  -h|--help) usage;;
+  *) usage 1;;
+esac

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# doctor — vérifie que tout fonctionne (config, liste blanche, SSH, uapi, outils distants)
+#: o2 doctor
+. "$O2_ROOT/lib/common.sh"
+case "${1:-}" in -h|--help) usage;; esac
+fail=0
+for b in ssh rsync jq curl; do command -v "$b" >/dev/null && ok "local : $b" || { warn "manquant en local : $b"; fail=1; }; done
+load_config; ok "config : $O2_CONFIG ($O2_USER@$O2_HOST)"
+ip="$(my_ip || true)"; [ -n "$ip" ] && ok "IP publique : $ip" || warn "IP publique inconnue"
+if [ -n "${O2_API_TOKEN:-}" ]; then
+  wl="$(curl -sS -m 30 -H "Authorization: cpanel $O2_USER:$O2_API_TOKEN" "https://$O2_HOST:2083/execute/SshWhitelist/list" || true)"
+  if json_ok "$wl"; then
+    if printf '%s' "$wl" | grep -q "$ip"; then ok "IP en liste blanche SSH"; else warn "IP absente de la liste blanche → o2 whitelist add"; fi
+  else warn "jeton d'API refusé ou API indisponible : ${wl:0:120}"; fail=1; fi
+else warn "pas de jeton d'API : liste blanche à gérer dans cPanel (Outils → Autorisation SSH)"; fi
+if ssh -o BatchMode=yes -o ConnectTimeout=15 "$O2_SSH_ALIAS" true 2>/dev/null; then ok "SSH par clé : ssh $O2_SSH_ALIAS"
+else warn "SSH impossible (IP non autorisée, clé absente, ou hôte faux) → o2 init"; exit 1; fi
+remote "
+  command -v $UAPI_BIN >/dev/null && echo 'ok uapi' || echo 'ko uapi'
+  command -v $CLS_BIN >/dev/null && echo 'ok cloudlinux-selector (apps Node/Python)' || echo 'ko cloudlinux-selector'
+  command -v composer >/dev/null && echo \"ok composer \$(composer --version 2>/dev/null | cut -d' ' -f3)\" || echo 'ko composer'
+  echo \"ok php \$(php -v 2>/dev/null | head -1 | cut -d' ' -f2) (sélecteur cPanel)\"
+  echo \"ok node : versions \$(ls /opt/alt 2>/dev/null | grep -o 'nodejs[0-9]*' | tr -d a-z | sort -n | paste -sd,)\"
+  crontab -l >/dev/null 2>&1 && echo 'ok crontab' || echo 'ok crontab (vide)'
+" | sed 's/^ok /\x1b[1;32m ok\x1b[0m /; s/^ko /\x1b[1;33m !!\x1b[0m manquant : /'
+d="$(uapi DomainInfo primary_domain 2>/dev/null | jq -r . || true)"; [ -n "$d" ] && ok "uapi répond, domaine principal : $d" || { warn "uapi ne répond pas"; fail=1; }
+exit $fail

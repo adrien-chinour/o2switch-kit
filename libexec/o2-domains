@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# domains — lister et créer domaines, sous-domaines, racines de documents
+#: o2 domains list
+#: o2 domains add-sub <sous.domaine.tld> [docroot]     docroot relatif au home, défaut public_html/<sous.domaine.tld>
+#: o2 domains add <domaine.tld> [docroot]              domaine supplémentaire (addon), défaut public_html/<domaine.tld>
+#: o2 domains docroot <domaine> <docroot>              change la racine (ex. apps/blog/public)
+#: o2 domains rm <domaine>                             supprime le (sous-)domaine, garde les fichiers
+#:
+#: Le SSL (AutoSSL) est généré automatiquement quelques minutes après l'ajout,
+#: une fois que le DNS pointe vers l'hébergement. Voir : o2 ssl status
+. "$O2_ROOT/lib/common.sh"; load_config; need jq
+
+list() {
+  uapi DomainInfo domains_data format=list | jq -r '
+    (["DOMAINE","TYPE","DOCROOT"] | @tsv),
+    (.[] | [.domain, .type, (.documentroot | sub("^/home/[^/]+/"; ""))] | @tsv)' | column -t -s $'\t'
+}
+split_sub() { sub_label="${1%%.*}"; root_domain="${1#*.}"; [ "$sub_label" != "$1" ] || die "sous-domaine attendu, ex. api.example.com"; }
+
+case "${1:-list}" in
+  list) list;;
+  add-sub)
+    [ -n "${2:-}" ] || usage 1; split_sub "$2"; docroot="${3:-public_html/$2}"
+    uapi SubDomain addsubdomain "domain=$sub_label" "rootdomain=$root_domain" "dir=/${docroot#/}" >/dev/null
+    ok "sous-domaine $2 créé, racine : $docroot";;
+  add)
+    [ -n "${2:-}" ] || usage 1; docroot="${3:-public_html/$2}"
+    uapi AddonDomain addaddondomain "newdomain=$2" "subdomain=${2%%.*}" "dir=/${docroot#/}" >/dev/null
+    ok "domaine $2 ajouté, racine : $docroot (pense à faire pointer le DNS vers l'hébergement)";;
+  docroot)
+    [ -n "${3:-}" ] || usage 1
+    uapi SubDomain changedocroot "domain=$2" "docroot=${3#/}" >/dev/null
+    ok "racine de $2 : $3";;
+  rm)
+    [ -n "${2:-}" ] || usage 1
+    type="$(uapi DomainInfo single_domain_data "domain=$2" | jq -r .type)"
+    case "$type" in
+      sub_domain) uapi SubDomain delsubdomain "domain=$2" >/dev/null;;
+      addon_domain)
+        subname="$(uapi AddonDomain listaddondomains | jq -r --arg d "$2" '.[] | select(.domain==$d) | .subdomain')"
+        uapi AddonDomain deladdondomain "domain=$2" "subdomain=$subname" >/dev/null;;
+      *) die "impossible de supprimer un domaine de type '$type'";;
+    esac
+    ok "$2 supprimé (fichiers conservés)";;
+  -h|--help) usage;;
+  *) usage 1;;
+esac
